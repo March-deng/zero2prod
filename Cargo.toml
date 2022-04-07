@@ -1,0 +1,58 @@
+[package]
+name = "zero2prod"
+version = "0.1.0"
+edition = "2021"
+authors = ["dengcong"]
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+path = "src/main.rs"
+name = "zero2prod"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+actix-web = "4.0.1"
+serde = { version = "1", features = ["derive"] }
+serde_derive = "1.0.136"
+tokio = { version = "1.17.0", features = ["macros", "rt-multi-thread"] }
+config = "0.12.0"
+uuid = { version = "0.8.2", features = ["v4"] }
+chrono = "0.4.19"
+tracing = { version = "0.1.32", features = ["log"] }
+tracing-bunyan-formatter = "0.3.2"
+tracing-subscriber = { version = "0.3.9", features = ["env-filter"] }
+tracing-log = "0.1.2"
+once_cell = "1.10.0"
+secrecy = { version = "0.8.0", features = ["serde"] }
+tracing-actix-web = "0.5.1"
+serde-aux = "3.0.1"
+unicode-segmentation = "1.9.0"
+claim = "0.5.0"
+validator = "0.14.0"
+reqwest = { version = "0.11.10", default-features = false, features = [
+    "json",
+    "rustls-tls",
+] }
+[dependencies.sqlx]
+version = "0.5.11"
+default-features = false
+features = [
+    "runtime-actix-rustls",
+    "macros",
+    "postgres",
+    "uuid",
+    "chrono",
+    "migrate",
+    "offline",
+]
+
+
+[dev-dependencies]
+wiremock = "0.5"
+urlencoding = "2.1.0"
+fake = "~2.3"
+quickcheck = "0.9.2"
+quickcheck_macros = "0.9.1"
