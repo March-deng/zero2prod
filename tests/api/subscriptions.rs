@@ -1,19 +1,20 @@
 use crate::helper::spawn_app;
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, ResponseTemplate};
 #[tokio::test]
 async fn subscribe_works_for_valid_data() {
     let app = spawn_app().await;
-    let client = reqwest::Client::new();
 
     let body = "name=dengcong&email=marchdeng%40email.com";
-    let resp = client
-        .post(&format!("{}/subscriptions", app.address))
-        .header("Content-Type", "application/x-www-form-urlencoded")
-        .body(body)
-        .send()
-        .await
-        .expect("Unable to execute request");
 
-    println!("{}", resp.status());
+    Mock::given(path("/email"))
+        .and(method("POST"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&app.email_server)
+        .await;
+
+    let resp = app.post_subscriptions(body.into()).await;
 
     let saved = sqlx::query!("SELECT email, name FROM subscriptions")
         .fetch_one(&app.db_pool)
@@ -27,7 +28,6 @@ async fn subscribe_works_for_valid_data() {
 #[tokio::test]
 async fn subscribe_bad_req_for_broken_data() {
     let app = spawn_app().await;
-    let client = reqwest::Client::new();
 
     let cases = vec![
         ("name=le%20guin", "missing email"),
@@ -36,13 +36,7 @@ async fn subscribe_bad_req_for_broken_data() {
     ];
 
     for (body, err_msg) in cases {
-        let resp = client
-            .post(&format!("{}/subscriptions", app.address))
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .body(body)
-            .send()
-            .await
-            .expect("Unable to execute request");
+        let resp = app.post_subscriptions(body.into()).await;
 
         assert_eq!(
             400,
@@ -56,7 +50,6 @@ async fn subscribe_bad_req_for_broken_data() {
 #[tokio::test]
 async fn subscribe_returns_400_when_fields_present_but_empty() {
     let app = spawn_app().await;
-    let client = reqwest::Client::new();
     let test_cases = vec![
         ("name=&email=ursula_le_guin%40gmail.com", "empty name"),
         ("name=Ursula&email=", "empty email"),
@@ -64,13 +57,7 @@ async fn subscribe_returns_400_when_fields_present_but_empty() {
     ];
 
     for (body, description) in test_cases {
-        let resp = client
-            .post(&format!("{}/subscriptions", &app.address))
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .body(body)
-            .send()
-            .await
-            .expect("Unable to execute request");
+        let resp = app.post_subscriptions(body.into()).await;
         assert_eq!(
             400,
             resp.status().as_u16(),
@@ -78,4 +65,62 @@ async fn subscribe_returns_400_when_fields_present_but_empty() {
             description
         );
     }
+}
+
+#[tokio::test]
+async fn subscribe_sends_a_confirmation_email_for_valid_data() {
+    let app = spawn_app().await;
+    let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
+
+    Mock::given(path("/email"))
+        .and(method("POST"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&app.email_server)
+        .await;
+
+    app.post_subscriptions(body.into()).await;
+}
+
+async fn sunscribe_sends_a_confirmation_email_with_link() {
+    let app = spawn_app().await;
+    let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
+
+    Mock::given(path("/email"))
+        .and(method("POST"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&app.email_server)
+        .await;
+
+    app.post_subscriptions(body.into()).await;
+
+    let email_request = &app.email_server.received_requests().await.unwrap()[0];
+
+    let confirmation_links = app.get_confirmation_link(email_request);
+    assert_eq!(confirmation_links.html, confirmation_links.plain_text);
+}
+
+#[tokio::test]
+async fn subscribe_persist_the_new_subscriber() {
+    let app = spawn_app().await;
+
+    let body = "name=dengcong&email=marchdeng%40email.com";
+
+    Mock::given(path("/email"))
+        .and(method("POST"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&app.email_server)
+        .await;
+
+    let resp = app.post_subscriptions(body.into()).await;
+
+    let saved = sqlx::query!("SELECT email, name, status FROM subscriptions")
+        .fetch_one(&app.db_pool)
+        .await
+        .expect("Unable to fetch saved subscription.");
+    assert_eq!(saved.email, "marchdeng@email.com");
+    assert_eq!(saved.name, "dengcong");
+    assert_eq!(saved.status, "pending_confirmation");
+    assert_eq!(200, resp.status().as_u16());
 }
