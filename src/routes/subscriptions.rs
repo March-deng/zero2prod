@@ -4,12 +4,15 @@ use crate::{
     startup::ApplicationBaseUrl,
 };
 use actix_web::{
+    http::StatusCode,
     web::{self},
-    HttpResponse,
+    HttpResponse, ResponseError,
 };
+use anyhow::Context;
 use chrono::Utc;
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use sqlx::PgPool;
+use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 
 #[derive(serde::Deserialize)]
@@ -42,33 +45,30 @@ pub async fn subscribe(
     pool: web::Data<PgPool>,
     email_client: web::Data<EmailClient>,
     base_url: web::Data<ApplicationBaseUrl>,
-) -> HttpResponse {
-    let subscriber = match form.0.try_into() {
-        Ok(form) => form,
-        Err(_) => return HttpResponse::BadRequest().finish(),
-    };
-    let subscriber_id = match insert_subscriber(&pool, &subscriber).await {
-        Ok(subscriber_id) => subscriber_id,
-        Err(_) => return HttpResponse::InternalServerError().finish(),
-    };
+) -> Result<HttpResponse, SubscribeError> {
+    let subscriber = form.0.try_into().map_err(SubscribeError::ValidationError)?;
+    let mut transaction = pool
+        .begin()
+        .await
+        .context("Failed to acquire a postgres connection for transaction")?;
+
+    let subscriber_id = insert_subscriber(&mut transaction, &subscriber)
+        .await
+        .context("")?;
 
     let subscription_token = generate_subcription_token();
 
-    if store_token(&pool, subscriber_id, &subscription_token)
+    store_token(&mut transaction, subscriber_id, &subscription_token)
         .await
-        .is_err()
-    {
-        return HttpResponse::InternalServerError().finish();
-    }
+        .context("")?;
 
-    if send_confirmation_email(&email_client, subscriber, &base_url.0, "mytoken")
+    transaction.commit().await.context("")?;
+
+    send_confirmation_email(&email_client, subscriber, &base_url.0, "mytoken")
         .await
-        .is_err()
-    {
-        return HttpResponse::InternalServerError().finish();
-    }
+        .context("")?;
 
-    HttpResponse::Ok().finish()
+    Ok(HttpResponse::Ok().finish())
 }
 
 fn generate_subcription_token() -> String {
@@ -80,12 +80,35 @@ fn generate_subcription_token() -> String {
         .collect()
 }
 
+#[derive(thiserror::Error)]
+pub enum SubscribeError {
+    #[error("{0}")]
+    ValidationError(String),
+    #[error(transparent)]
+    UnexpectedError(#[from] anyhow::Error),
+}
+
+impl std::fmt::Debug for SubscribeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        error_chain_fmt(self, f)
+    }
+}
+
+impl ResponseError for SubscribeError {
+    fn status_code(&self) -> StatusCode {
+        match self {
+            SubscribeError::ValidationError(_) => StatusCode::BAD_REQUEST,
+            SubscribeError::UnexpectedError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
+}
+
 #[tracing::instrument(
     name = "saving new subscriber details in the database",
-    skip(new_subscriber, pool)
+    skip(new_subscriber, transaction)
 )]
 pub async fn insert_subscriber(
-    pool: &PgPool,
+    transaction: &mut Transaction<'_, Postgres>,
     new_subscriber: &NewSubscriber,
 ) -> Result<(Uuid), sqlx::Error> {
     let subscriber_id = Uuid::new_v4();
@@ -99,7 +122,7 @@ pub async fn insert_subscriber(
         new_subscriber.name.as_ref(),
         Utc::now()
     )
-    .execute(pool)
+    .execute(transaction)
     .await
     .map_err(|e| {
         tracing::error!("Unable to execute queryL: {:?}", e);
@@ -134,19 +157,59 @@ pub async fn send_confirmation_email(
         confirmation_link
     );
     email_client
-        .send_email(subscriber.email, "Welcome!", &html_content, &text_content)
+        .send_email(&subscriber.email, "Welcome!", &html_content, &text_content)
         .await
+}
+
+pub struct StoreTokenError(sqlx::Error);
+
+impl std::fmt::Display for StoreTokenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "A database error was encountered while trying to store a subscription token."
+        )
+    }
+}
+
+impl std::fmt::Debug for StoreTokenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        error_chain_fmt(self, f)
+    }
+}
+
+impl ResponseError for StoreTokenError {}
+
+impl std::error::Error for StoreTokenError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.0)
+    }
+}
+
+pub fn error_chain_fmt(
+    e: &impl std::error::Error,
+    f: &mut std::fmt::Formatter<'_>,
+) -> std::fmt::Result {
+    writeln!(f, "{}\n", e)?;
+    let mut current = e.source();
+
+    while let Some(cause) = current {
+        writeln!(f, "Caused by:\n\t{}", cause)?;
+        current = cause.source();
+    }
+
+    Ok(())
 }
 
 #[tracing::instrument(
     name = "store subscription token in the database",
-    skip(subscriber_id, pool)
+    skip(subscriber_id, transaction)
 )]
 pub async fn store_token(
-    pool: &PgPool,
+    transaction: &mut Transaction<'_, Postgres>,
     subscriber_id: Uuid,
     subscription_token: &str,
-) -> Result<(), sqlx::Error> {
+) -> Result<(), StoreTokenError> {
     sqlx::query!(
         r#"
     INSERT INTO subsciption_tokens (subscriber_id, subscription_token)
@@ -155,12 +218,9 @@ pub async fn store_token(
         subscriber_id,
         subscription_token,
     )
-    .execute(pool)
+    .execute(transaction)
     .await
-    .map_err(|e| {
-        tracing::error!("Unable to execute queryL: {:?}", e);
-        e
-    })?;
+    .map_err(|e| StoreTokenError(e))?;
 
     Ok(())
 }
