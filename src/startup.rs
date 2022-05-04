@@ -3,7 +3,8 @@ use std::net::TcpListener;
 use crate::configuration::{DBSettings, Settings};
 use crate::routes::confirm;
 use crate::{
-    email_client::EmailClient, routes::health_check, routes::publish_newsletter, routes::subscribe,
+    email_client::EmailClient, routes::health_check, routes::home, routes::login,
+    routes::login_form, routes::publish_newsletter, routes::subscribe,
 };
 use actix_web::{dev::Server, web, App, HttpServer};
 use sqlx::postgres::PgPoolOptions;
@@ -65,6 +66,9 @@ pub fn run(
     let server = HttpServer::new(move || {
         App::new()
             .wrap(TracingLogger::default())
+            .route("/login", web::post().to(login))
+            .route("/login", web::get().to(login_form))
+            .route("/", web::get().to(home))
             .route("/health_check", web::get().to(health_check))
             .route("/subscriptions", web::post().to(subscribe))
             .route("/subscriptions/confirm", web::get().to(confirm))
