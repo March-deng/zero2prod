@@ -7,6 +7,7 @@ use crate::{
     routes::login_form, routes::publish_newsletter, routes::subscribe,
 };
 use actix_web::{dev::Server, web, App, HttpServer};
+use secrecy::Secret;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use tracing_actix_web::TracingLogger;
@@ -38,7 +39,13 @@ impl Application {
         let listener = TcpListener::bind(address)?;
         let port = listener.local_addr().unwrap().port();
 
-        let server = run(listener, db_pool, email_client, config.application.base_url)?;
+        let server = run(
+            listener,
+            db_pool,
+            email_client,
+            config.application.base_url,
+            config.application.hmac_secret,
+        )?;
 
         Ok(Self { port, server })
     }
@@ -54,11 +61,15 @@ impl Application {
 
 pub struct ApplicationBaseUrl(pub String);
 
+#[derive(Clone)]
+pub struct HmacSecret(pub Secret<String>);
+
 pub fn run(
     listener: TcpListener,
     db: PgPool,
     email_client: EmailClient,
     base_url: String,
+    hmac_secret: Secret<String>,
 ) -> Result<Server, std::io::Error> {
     let db = web::Data::new(db);
     let email_client = web::Data::new(email_client);
@@ -76,6 +87,7 @@ pub fn run(
             .app_data(db.clone())
             .app_data(email_client.clone())
             .app_data(base_url.clone())
+            .app_data(web::Data::new(HmacSecret(hmac_secret.clone())))
         // .app_data()
     })
     .listen(listener)?
@@ -83,29 +95,6 @@ pub fn run(
 
     Ok(server)
 }
-
-// pub async fn build(config: Settings) -> Result<Server, std::io::Error> {
-//     let db_pool = PgPoolOptions::new()
-//         .connect_timeout(std::time::Duration::from_secs(2))
-//         .connect_lazy_with(config.database.with_db());
-
-//     let sender_email = config
-//         .email_client
-//         .sender()
-//         .expect("Invalid sender email address from config");
-//     let timeout = config.email_client.timeout();
-//     let email_client = EmailClient::new(
-//         config.email_client.base_url,
-//         sender_email,
-//         config.email_client.authorization_token,
-//         timeout,
-//     );
-
-//     let address = format!("{}:{}", config.application.host, config.application.port);
-//     let listener = TcpListener::bind(address)?;
-
-//     run(listener, db_pool, email_client)
-// }
 
 pub fn get_connection_pool(config: &DBSettings) -> PgPool {
     PgPoolOptions::new()
