@@ -6,7 +6,7 @@ use zero2prod::startup::Application;
 use zero2prod::telemetry::{get_subsciber, init_subscriber};
 
 #[tokio::main]
-async fn main() -> std::io::Result<()> {
+async fn main() -> anyhow::Result<()> {
     let subscriber = get_subsciber("zero2prod".into(), "info".into(), std::io::stdout);
     init_subscriber(subscriber);
     // read config
