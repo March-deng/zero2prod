@@ -1,6 +1,7 @@
 use argon2::password_hash::SaltString;
 use argon2::{Argon2, PasswordHasher};
 use once_cell::sync::Lazy;
+use reqwest::Body;
 use sha3::Digest;
 use sqlx::{Connection, Executor, PgConnection, PgPool};
 use std::net::TcpListener;
@@ -71,6 +72,8 @@ impl TestUser {
         .await
         .expect("Unable to store test user");
     }
+
+    pub async fn login(&self) {}
 }
 
 impl TestApp {
@@ -184,6 +187,18 @@ impl TestApp {
             .send()
             .await
             .expect("Failed to execute request")
+    }
+
+    pub async fn post_publish_newsletter<Body>(&self, body: &Body) -> reqwest::Response
+    where
+        Body: serde::Serialize,
+    {
+        self.api_client
+            .post(format!("{}/admin/newsletter", &self.address))
+            .form(body)
+            .send()
+            .await
+            .expect("Unable to execute request.")
     }
 }
 

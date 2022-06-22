@@ -2,7 +2,7 @@ use uuid::Uuid;
 use wiremock::matchers::{any, method, path};
 use wiremock::{Mock, ResponseTemplate};
 
-use crate::helper::{spawn_app, ConfirmationLinks, TestApp};
+use crate::helper::{assert_is_redirect_to, spawn_app, ConfirmationLinks, TestApp};
 
 #[tokio::test]
 async fn newsletter_are_not_delivered_to_unconfirmed_subscribers() {
@@ -198,3 +198,60 @@ async fn create_confirmed_subscriber(app: &TestApp) {
         .error_for_status()
         .unwrap();
 }
+
+// async fn newsletter_creation_is_idempotent() {
+//     let app = spawn_app().await;
+//     create_confirmed_subscriber(&app).await;
+
+//     app.test_user.login().await;
+
+//     Mock::given(path("/email"))
+//         .and(method("POST"))
+//         .respond_with(ResponseTemplate::new(200))
+//         .expect(1)
+//         .mount(&app.email_server)
+//         .await;
+
+//     let newletter_request_body = serde_json::json!({
+//         "title": "Newsletter title",
+//         "text_content": "Newletter body as plain text",
+//         "html_content": "<p>Newsletter body as HTML</p>",
+//         "idempotency_key": uuid::Uuid::new_v4().to_string()
+//     });
+
+//     let resp = app.post_publish_newsletter(&newletter_request_body).await;
+//     assert_is_redirect_to(&resp, "/admin/newsletter");
+// }
+
+// #[tokio::test]
+// async fn concurrent_form_submission_is_handled_gracefully() {
+//     // Arrange
+//     let app = spawn_app().await;
+//     create_confirmed_subscriber(&app).await;
+//     app.test_user.login(&app).await;
+
+//     Mock::given(path("/email"))
+//         .and(method("POST"))
+//         // Setting a long delay to ensure that the second request
+//         // arrives before the first one completes
+//         .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(2)))
+//         .expect(1)
+//         .mount(&app.email_server)
+//         .await;
+
+//     // Act - Submit two newsletter forms concurrently
+//     let newsletter_request_body = serde_json::json!({
+//         "title": "Newsletter title",
+//         "text_content": "Newsletter body as plain text",
+//         "html_content": "<p>Newsletter body as HTML</p>",
+//         "idempotency_key": uuid::Uuid::new_v4().to_string()
+//     });
+//     let response1 = app.post_publish_newsletter(&newsletter_request_body);
+//     let response2 = app.post_publish_newsletter(&newsletter_request_body);
+//     let (response1, response2) = tokio::join!(response1, response2);
+
+//     assert_eq!(response1.status(), response2.status());
+//     assert_eq!(response1.text().await.unwrap(), response2.text().await.unwrap());
+
+//     // Mock verifies on Drop that we have sent the newsletter email **once**
+// }
